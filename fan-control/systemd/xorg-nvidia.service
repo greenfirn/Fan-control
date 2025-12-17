@@ -1,0 +1,12 @@
+[Unit]
+Description=Headless Xorg for NVIDIA Fan Control
+After=multi-user.target nvidia-persistenced.service
+Before=fan-curve.service
+
+[Service]
+ExecStartPre=/usr/local/bin/generate-xorg-config.sh
+ExecStart=/usr/lib/xorg/Xorg :0 -config /etc/X11/xorg.conf
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

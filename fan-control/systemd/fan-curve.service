@@ -1,0 +1,12 @@
+[Unit]
+Description=NVIDIA Fan Curve
+After=xorg-nvidia.service
+Wants=xorg-nvidia.service
+
+[Service]
+ExecStart=/usr/local/bin/fan-curve.sh
+ExecStop=/usr/local/bin/fan-reset.sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

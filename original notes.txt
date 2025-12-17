@@ -1,0 +1,587 @@
+# remove '--no-persistence' from nvidia-persistenced.service
+sudo nano /usr/lib/systemd/system/nvidia-persistenced.service
+
+# restart service
+sudo systemctl daemon-reload
+sudo systemctl restart nvidia-persistenced
+
+# Verify persistence mode
+nvidia-smi --query-gpu=persistence_mode --format=csv
+
+# check current clocks
+nvidia-smi --query-gpu=clocks.gr --format=csv,noheader,nounits
+nvidia-smi --query-gpu=clocks.mem --format=csv,noheader,nounits
+
+#========================================================================================================
+#========================================================================================================
+
+# --- manually test if gpu in 'passthrough' mode ---
+
+sudo tee test_passthrough.sh > /dev/null << 'EOF'
+#!/bin/bash
+
+DISPLAY=":0"
+
+detect_passthrough_mode() {
+    local GPU=$1
+
+    echo "=== Testing passthrough mode for GPU $GPU ==="
+
+    # 1) Test NV-CONTROL availability
+    local FANS
+    FANS=$(DISPLAY=$DISPLAY nvidia-settings -q fans 2>/dev/null | grep -o '\[fan:[0-9]\+\]')
+    if [[ -z "$FANS" ]]; then
+        echo "NV-CONTROL: NOT available (nvidia-settings cannot access fans)"
+        NVCONTROL_OK=0
+    else
+        echo "NV-CONTROL: Available (fans detected: $FANS)"
+        NVCONTROL_OK=1
+    fi
+
+    # 2) Test NVML (nvidia-smi) temperature read
+    local TEMP
+    TEMP=$(nvidia-smi --query-gpu=temperature.gpu \
+                      --format=csv,noheader,nounits -i "$GPU" 2>/dev/null | tr -d '[:space:]')
+    if [[ -z "$TEMP" || ! "$TEMP" =~ ^[0-9]+$ ]]; then
+        echo "NVML: NOT available (failed to read temperature)"
+        NVML_OK=0
+    else
+        echo "NVML: Available (temp=$TEMP°C)"
+        NVML_OK=1
+    fi
+
+    # 3) Test GPU utilization (indicates compute workload)
+    local UTIL
+    UTIL=$(nvidia-smi --query-gpu=utilization.gpu \
+                       --format=csv,noheader,nounits -i "$GPU" 2>/dev/null | tr -d '[:space:]')
+
+    if [[ "$UTIL" =~ ^[0-9]+$ ]]; then
+        echo "GPU Utilization: $UTIL%"
+        if (( UTIL > 40 )); then
+            HEAVY_LOAD=1
+        else
+            HEAVY_LOAD=0
+        fi
+    else
+        echo "GPU Utilization: Unknown"
+        HEAVY_LOAD=0
+    fi
+
+    echo ""
+    echo "EVALUATION:"
+    echo "  NV-CONTROL OK? $NVCONTROL_OK"
+    echo "  NVML OK?       $NVML_OK"
+    echo "  Heavy load?    $HEAVY_LOAD"
+    echo ""
+
+    if (( NVCONTROL_OK == 0 && NVML_OK == 1 && HEAVY_LOAD == 1 )); then
+        echo ">>> RESULT: PASSTHROUGH / COMPUTE MODE DETECTED <<<"
+        return 0
+    else
+        echo ">>> RESULT: NORMAL MODE (manual fan control possible) <<<"
+        return 1
+    fi
+}
+
+detect_passthrough_mode 0
+EOF
+
+sudo chmod +x test_passthrough.sh
+sudo ./test_passthrough.sh
+
+#========================================================================================================
+#========================================================================================================
+
+# --- write Xorg config generator --- runs on every boot with xorg service, creates conf file needed for fan control
+
+sudo tee /usr/local/bin/generate-xorg-config.sh > /dev/null << 'GEN_EOF'
+#!/bin/bash
+# Auto-generate a simple headless Xorg config for all NVIDIA GPUs.
+# Safe to run even if compute workloads are active (Xorg may later fail to start, that's OK).
+
+XORG_CONFIG="/etc/X11/xorg.conf"
+
+echo "[XORG] Waiting briefly for NVIDIA modules..."
+sleep 4
+
+rm -f "$XORG_CONFIG"
+
+echo "[XORG] Detecting NVIDIA GPUs via nvidia-smi..."
+GPU_BUS_IDS=()
+
+# Primary method: nvidia-smi PCI bus IDs
+while IFS= read -r raw; do
+    raw="${raw#00000000:}"   # strip leading 00000000: if present
+    if [[ "$raw" =~ ^([0-9a-fA-F]{2}):([0-9a-fA-F]{2})\.([0-9a-fA-F])$ ]]; then
+        DOMAIN="${BASH_REMATCH[1]}"
+        BUS="${BASH_REMATCH[2]}"
+        SLOT="${BASH_REMATCH[3]}"
+        XORG="PCI:$((16#$DOMAIN)):$((16#$BUS)):$SLOT"
+        GPU_BUS_IDS+=("$XORG")
+        echo "[XORG] Found GPU at $XORG"
+    fi
+done < <(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader 2>/dev/null)
+
+# Fallback: lspci if nvidia-smi is blocked
+if [ ${#GPU_BUS_IDS[@]} -eq 0 ]; then
+    echo "[XORG] nvidia-smi query failed, using lspci fallback..."
+    while IFS= read -r dev; do
+        if [[ "$dev" =~ ^([0-9a-fA-F]{2}):([0-9a-fA-F]{2})\.([0-9a-fA-F])$ ]]; then
+            DOMAIN="${BASH_REMATCH[1]}"
+            BUS="${BASH_REMATCH[2]}"
+            SLOT="${BASH_REMATCH[3]}"
+            XORG="PCI:$((16#$DOMAIN)):$((16#$BUS)):$SLOT"
+            GPU_BUS_IDS+=("$XORG")  
+            echo "[XORG] Found GPU at $XORG (lspci)"
+        fi
+    done < <(lspci | grep -i nvidia | awk '{print $1}')
+fi
+
+if [ ${#GPU_BUS_IDS[@]} -eq 0 ]; then
+    echo "[XORG] ERROR: No NVIDIA GPUs detected."
+    exit 1
+fi
+
+echo "[XORG] Preparing config for ${#GPU_BUS_IDS[@]} GPU(s)."
+
+cat > "$XORG_CONFIG" << 'CONFIG_EOF'
+Section "ServerFlags"
+    Option "BlankTime" "0"
+    Option "StandbyTime" "0"
+    Option "SuspendTime" "0"
+    Option "OffTime" "0"
+    Option "AutoAddDevices" "false"
+    Option "AutoAddGPU" "false"
+EndSection
+
+Section "Module"
+    Disable "glx"
+EndSection
+
+Section "ServerLayout"
+    Identifier "Layout0"
+CONFIG_EOF
+
+# Layout screens
+for i in "${!GPU_BUS_IDS[@]}"; do
+    echo "    Screen $i \"Screen$i\" 0 0" >> "$XORG_CONFIG"
+done
+
+cat >> "$XORG_CONFIG" << 'CONFIG_EOF'
+EndSection
+
+Section "Monitor"
+    Identifier "Monitor0"
+    Option "DPMS" "false"
+EndSection
+CONFIG_EOF
+
+# Per-GPU device/screen
+for i in "${!GPU_BUS_IDS[@]}"; do
+cat >> "$XORG_CONFIG" << EOF
+
+Section "Device"
+    Identifier "Device$i"
+    Driver "nvidia"
+    BusID "${GPU_BUS_IDS[$i]}"
+    Option "Coolbits" "31"
+    Option "AllowEmptyInitialConfiguration" "true"
+    Option "UseDisplayDevice" "none"
+EndSection
+
+Section "Screen"
+    Identifier "Screen$i"
+    Device "Device$i"
+    Monitor "Monitor0"
+    DefaultDepth 24
+    SubSection "Display"
+        Depth 24
+        Virtual 1920 1080
+    EndSubSection
+EndSection
+EOF
+done
+
+echo "[XORG] Generated config at $XORG_CONFIG"
+GEN_EOF
+
+sudo chmod +x /usr/local/bin/generate-xorg-config.sh
+
+# run once to test
+
+sudo /usr/local/bin/generate-xorg-config.sh
+
+# check xorg.conf has proper 'BUS ID'
+
+sudo cat /etc/X11/xorg.conf
+
+#========================================================================================================
+#========================================================================================================
+
+# --- write xorg-nvidia.service --- needed to make fan control availible, should restart if gpu is reset, goes into passthrough mode
+
+sudo tee /etc/systemd/system/xorg-nvidia.service > /dev/null << 'EOF'
+[Unit]
+Description=Headless Xorg for NVIDIA Fan + OC Control
+After=network.target multi-user.target nvidia-persistenced.service
+Wants=nvidia-persistenced.service
+Before=fan-curve.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+Environment=DISPLAY=:0
+
+# Always (re)generate config at boot
+ExecStartPre=/usr/local/bin/generate-xorg-config.sh
+
+# Xorg may fail to start if the GPU is fully occupied by compute workloads.
+# That's OK: fan-curve.sh will detect the absence of Xorg and use firmware fallback.
+ExecStart=/usr/lib/xorg/Xorg :0 \
+    -config /etc/X11/xorg.conf \
+    -noreset -verbose 3
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+#========================================================================================================
+#========================================================================================================
+
+# -- write fan-reset.sh --- resets fans back to auto mode when fan service is stopped
+
+sudo tee /usr/local/bin/fan-reset.sh > /dev/null << 'EOF'
+#!/bin/bash
+#
+# NVIDIA Fan Reset Script
+#
+# - Resets ALL NVIDIA GPU fans back to AUTO mode.
+# - Works on GPUs with any number of fans ([fan:0], [fan:1], [fan:2], etc.).
+# - Safe when Xorg is down (won't crash, won't reset GPUs).
+# - Intended for ExecStop in fan-curve.service.
+#
+
+DISPLAY=":0"
+
+echo "[FAN-RESET] Detecting fans..."
+
+# Enumerate fans globally (universal across all RTX cards)
+FANS=$(DISPLAY=$DISPLAY nvidia-settings -q fans 2>/dev/null | grep -o '\[fan:[0-9]\+\]')
+
+if [[ -z "$FANS" ]]; then
+    echo "[FAN-RESET] No fans detected (Xorg not running or NV-CONTROL unavailable)."
+    echo "[FAN-RESET] Skipping reset safely."
+    exit 0
+fi
+
+echo "[FAN-RESET] Found the following fans:"
+echo "$FANS"
+
+# Reset each fan to AUTO mode
+for FAN in $FANS; do
+    echo "[FAN-RESET] Resetting $FAN → AUTO"
+    DISPLAY=$DISPLAY nvidia-settings -a "${FAN}/GPUTargetFanSpeed=0" >/dev/null 2>&1
+
+    if [[ $? -ne 0 ]]; then
+        echo "[FAN-RESET] WARN: Failed to reset $FAN — likely Xorg stopped or unavailable."
+    fi
+done
+
+echo "[FAN-RESET] All detected fans reset to AUTO mode."
+
+exit 0
+EOF
+
+sudo chmod +x /usr/local/bin/fan-reset.sh
+
+#========================================================================================================
+#========================================================================================================
+
+# --- Write fan-curve.sh --- main script to actually adjust fan speeds
+
+sudo tee /usr/local/bin/fan-curve.sh > /dev/null << 'EOF'
+#!/bin/bash
+#
+# NVIDIA Fan Curve Controller (v3 with bounce)
+#
+# - Xorg mode: full manual fan curve via nvidia-settings.
+# - Firmware mode (no Xorg): do NOT touch fans, just monitor temps and
+#   periodically "bounce" clocks.gr to wake up firmware thermal control.
+# - Never resets GPUs, never kills workloads, never changes power limit.
+#
+
+DISPLAY=":0"
+LOOP_INTERVAL=2        
+MIN_FAN_PCT=30         
+BOUNCE_INTERVAL=30     
+
+log() {
+    echo "[FAN] $(date '+%F %T') $*"
+}
+
+nvidia-smi -pm 1 >/dev/null 2>&1
+
+GPU_LIST=$(nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null)
+if [[ -z "$GPU_LIST" ]]; then
+    log "ERROR: No GPUs detected. Exiting."
+    exit 1
+fi
+log "Detected GPUs: $GPU_LIST"
+
+get_all_fans() {
+    DISPLAY=$DISPLAY nvidia-settings -q fans 2>/dev/null | grep -o '\[fan:[0-9]\+\]'
+}
+
+print_all_fan_speeds() {
+    local FANS
+    FANS=$(get_all_fans)
+
+    if [[ -z "$FANS" ]]; then
+        log "FAN SPEED: No fans detected (NV-CONTROL unavailable or Xorg blocked)"
+        return
+    fi
+
+    for FAN in $FANS; do
+        local SPEED_RAW SPEED
+        SPEED_RAW=$(DISPLAY=$DISPLAY nvidia-settings -q "${FAN}/GPUCurrentFanSpeed" 2>/dev/null)
+        SPEED=$(echo "$SPEED_RAW" | grep -oP "GPUCurrentFanSpeed.*?: \K[0-9]+")
+        [[ -z "$SPEED" ]] && SPEED="N/A"
+        log "FAN SPEED: $FAN → ${SPEED}%"
+    done
+}
+
+has_xorg() {
+    DISPLAY=$DISPLAY nvidia-settings -q gpus >/dev/null 2>&1
+}
+
+enable_manual() {
+    local GPU=$1
+    DISPLAY=$DISPLAY nvidia-settings -a "[gpu:${GPU}]/GPUFanControlState=1" >/dev/null 2>&1
+}
+
+set_fan_for_gpu() {
+    local GPU=$1
+    local PCT=$2
+
+    if (( PCT < MIN_FAN_PCT )); then PCT=$MIN_FAN_PCT; fi
+    if (( PCT > 100 )); then PCT=100; fi
+
+    enable_manual "$GPU"
+
+    local FANS
+    FANS=$(get_all_fans)
+
+    if [[ -z "$FANS" ]]; then
+        log "WARN: No fans detected when trying to set fan speed."
+        return
+    fi
+
+    for FAN in $FANS; do
+        DISPLAY=$DISPLAY nvidia-settings -a "${FAN}/GPUTargetFanSpeed=${PCT}" >/dev/null 2>&1 ||
+            log "WARN: Failed to set ${FAN} to ${PCT}%"
+    done
+}
+
+temp_to_pct() {
+    local T=$1
+
+    if   (( T <= 36 )); then echo 30
+    elif (( T <= 42 )); then echo 65
+    elif (( T <= 44 )); then echo 75
+    elif (( T <= 54 )); then echo 85
+    elif (( T <= 62 )); then echo 90
+    else                     echo 100
+    fi
+}
+
+detect_passthrough_mode() {
+    local GPU=$1
+
+    local FANS
+    FANS=$(DISPLAY=$DISPLAY nvidia-settings -q fans 2>/dev/null | grep -o '\[fan:[0-9]\+\]')
+    local NVCONTROL_OK=1
+    if [[ -z "$FANS" ]]; then
+        NVCONTROL_OK=0
+    fi
+
+    local TEMP
+    TEMP=$(nvidia-smi --query-gpu=temperature.gpu \
+                      --format=csv,noheader,nounits -i "$GPU" 2>/dev/null | tr -d '[:space:]')
+    local NVML_OK=1
+    if [[ -z "$TEMP" || ! "$TEMP" =~ ^[0-9]+$ ]]; then
+        NVML_OK=0
+    fi
+
+    local UTIL
+    UTIL=$(nvidia-smi --query-gpu=utilization.gpu \
+                       --format=csv,noheader,nounits -i "$GPU" 2>/dev/null | tr -d '[:space:]')
+    local HEAVY_LOAD=0
+    if [[ "$UTIL" =~ ^[0-9]+$ && "$UTIL" -gt 40 ]]; then
+        HEAVY_LOAD=1
+    fi
+
+    if (( NVCONTROL_OK == 0 && NVML_OK == 1 && HEAVY_LOAD == 1 )); then
+        return 0
+    else
+        return 1
+    fi
+}
+
+main_loop() {
+    declare -A LAST_PCT
+    local MODE="unknown"
+    local LAST_BOUNCE=0
+
+    while true; do
+
+        if has_xorg; then
+
+            if [[ "$MODE" != "xorg" ]]; then
+                log "Xorg detected → switching to manual fan control mode."
+                MODE="xorg"
+            fi
+
+            for GPU in $GPU_LIST; do
+                local TEMP
+                TEMP=$(nvidia-smi --query-gpu=temperature.gpu \
+                                   --format=csv,noheader,nounits -i "$GPU" 2>/dev/null | tr -d '[:space:]')
+
+                if [[ -z "$TEMP" || ! "$TEMP" =~ ^[0-9]+$ ]]; then
+                    log "WARN: Failed to read temp for GPU $GPU (Xorg mode)"
+                    continue
+                fi
+
+                local PCT
+                PCT=$(temp_to_pct "$TEMP")
+
+                if [[ "${LAST_PCT[$GPU]}" != "$PCT" ]]; then
+                    log "GPU $GPU: Temp=${TEMP}°C → Fan=${PCT}% (manual mode)"
+                    set_fan_for_gpu "$GPU" "$PCT"
+                    LAST_PCT[$GPU]=$PCT
+                fi
+            done
+	    
+        else
+
+            if [[ "$MODE" != "firmware" ]]; then
+                for GPU in $GPU_LIST; do
+                    if detect_passthrough_mode "$GPU"; then
+                        log "GPU $GPU: PASSTHROUGH / COMPUTE-LOCKED MODE detected (NV-CONTROL unavailable, NVML active)."
+                        log "GPU $GPU: Using firmware fan control + bounce mode."
+                    fi
+                done
+
+                log "No Xorg detected → switching to firmware-controlled fan mode."
+                MODE="firmware"
+            fi
+
+            for GPU in $GPU_LIST; do
+                local TEMP
+                TEMP=$(nvidia-smi --query-gpu=temperature.gpu \
+                                   --format=csv,noheader,nounits -i "$GPU" 2>/dev/null | tr -d '[:space:]')
+                if [[ -n "$TEMP" && "$TEMP" =~ ^[0-9]+$ ]]; then
+                    log "GPU $GPU: Temp=${TEMP}°C (firmware mode)"
+                fi
+            done
+
+            local NOW
+            NOW=$(date +%s)
+            if (( NOW - LAST_BOUNCE >= BOUNCE_INTERVAL )); then
+                for GPU in $GPU_LIST; do
+                    local CURRENT_CLOCK
+                    CURRENT_CLOCK=$(nvidia-smi --query-gpu=clocks.gr \
+                                               --format=csv,noheader,nounits -i "$GPU" 2>/dev/null | tr -d '[:space:]')
+
+                    if [[ -n "$CURRENT_CLOCK" && "$CURRENT_CLOCK" =~ ^[0-9]+$ ]]; then
+                        log "GPU $GPU: Performing safe clock bounce at ${CURRENT_CLOCK} MHz (firmware mode)"
+                        nvidia-smi -i "$GPU" -lgc "$CURRENT_CLOCK","$CURRENT_CLOCK" >/dev/null 2>&1
+                        sleep 0.3
+                        nvidia-smi -i "$GPU" -rgc >/dev/null 2>&1
+                    else
+                        log "WARN: Could not read clocks.gr for GPU $GPU during bounce."
+                    fi
+                done
+                LAST_BOUNCE=$NOW
+            fi
+        fi
+
+        print_all_fan_speeds
+
+        sleep "$LOOP_INTERVAL"
+    done
+}
+
+log "Starting NVIDIA Fan Curve (v3 with bounce) on DISPLAY=$DISPLAY"
+main_loop
+EOF
+
+sudo chmod +x /usr/local/bin/fan-curve.sh
+
+#========================================================================================================
+#========================================================================================================
+
+# --- write Xorg-independent fan-curve.service --- should continue even if xorg crashes
+
+sudo tee /etc/systemd/system/fan-curve.service > /dev/null << 'EOF'
+[Unit]
+Description=NVIDIA Fan Curve Controller
+After=multi-user.target nvidia-persistenced.service xorg-nvidia.service
+Wants=nvidia-persistenced.service xorg-nvidia.service
+
+StartLimitInterval=0
+StartLimitBurst=0
+
+[Service]
+Type=simple
+
+ExecStartPre=/bin/sleep 3
+
+ExecStart=/usr/local/bin/fan-curve.sh
+ExecStop=/usr/local/bin/fan-reset.sh
+
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+#========================================================================================================
+#========================================================================================================
+
+# let daemon know about changes to services
+sudo systemctl daemon-reload
+
+# enable so they start on boot
+sudo systemctl enable xorg-nvidia.service
+sudo systemctl enable fan-curve.service
+
+# start services
+sudo systemctl start xorg-nvidia.service
+sudo systemctl start fan-curve.service
+
+# show service status
+sleep 2
+sudo systemctl status xorg-nvidia.service
+sleep 2
+sudo systemctl status fan-curve.service
+
+# stop services
+sudo systemctl stop xorg-nvidia.service
+sudo systemctl stop fan-curve.service
+
+# restart services
+sudo systemctl restart xorg-nvidia.service
+sudo systemctl restart fan-curve.service
+
+# watch service log
+journalctl -u xorg-nvidia.service -f
+journalctl -u fan-curve.service -f
+
+journalctl -u xorg-nvidia.service -n 50 --no-pager
+journalctl -u fan-curve.service -n 50 --no-pager
