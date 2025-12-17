@@ -1,3 +1,5 @@
+** Chatgpt generated description **
+
 NVIDIA Fan Control Stack (Headless / Passthrough-Safe)
 
 This stack provides reliable NVIDIA fan control on headless Linux systems, including
