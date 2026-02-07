@@ -15,83 +15,6 @@ nvidia-smi --query-gpu=clocks.mem --format=csv,noheader,nounits
 #========================================================================================================
 #========================================================================================================
 
-# --- manually test if gpu in 'passthrough' mode ---
-
-sudo tee test_passthrough.sh > /dev/null << 'EOF'
-#!/bin/bash
-
-DISPLAY=":0"
-
-detect_passthrough_mode() {
-    local GPU=$1
-
-    echo "=== Testing passthrough mode for GPU $GPU ==="
-
-    # 1) Test NV-CONTROL availability
-    local FANS
-    FANS=$(DISPLAY=$DISPLAY nvidia-settings -q fans 2>/dev/null | grep -o '\[fan:[0-9]\+\]')
-    if [[ -z "$FANS" ]]; then
-        echo "NV-CONTROL: NOT available (nvidia-settings cannot access fans)"
-        NVCONTROL_OK=0
-    else
-        echo "NV-CONTROL: Available (fans detected: $FANS)"
-        NVCONTROL_OK=1
-    fi
-
-    # 2) Test NVML (nvidia-smi) temperature read
-    local TEMP
-    TEMP=$(nvidia-smi --query-gpu=temperature.gpu \
-                      --format=csv,noheader,nounits -i "$GPU" 2>/dev/null | tr -d '[:space:]')
-    if [[ -z "$TEMP" || ! "$TEMP" =~ ^[0-9]+$ ]]; then
-        echo "NVML: NOT available (failed to read temperature)"
-        NVML_OK=0
-    else
-        echo "NVML: Available (temp=$TEMP°C)"
-        NVML_OK=1
-    fi
-
-    # 3) Test GPU utilization (indicates compute workload)
-    local UTIL
-    UTIL=$(nvidia-smi --query-gpu=utilization.gpu \
-                       --format=csv,noheader,nounits -i "$GPU" 2>/dev/null | tr -d '[:space:]')
-
-    if [[ "$UTIL" =~ ^[0-9]+$ ]]; then
-        echo "GPU Utilization: $UTIL%"
-        if (( UTIL > 40 )); then
-            HEAVY_LOAD=1
-        else
-            HEAVY_LOAD=0
-        fi
-    else
-        echo "GPU Utilization: Unknown"
-        HEAVY_LOAD=0
-    fi
-
-    echo ""
-    echo "EVALUATION:"
-    echo "  NV-CONTROL OK? $NVCONTROL_OK"
-    echo "  NVML OK?       $NVML_OK"
-    echo "  Heavy load?    $HEAVY_LOAD"
-    echo ""
-
-    if (( NVCONTROL_OK == 0 && NVML_OK == 1 && HEAVY_LOAD == 1 )); then
-        echo ">>> RESULT: PASSTHROUGH / COMPUTE MODE DETECTED <<<"
-        return 0
-    else
-        echo ">>> RESULT: NORMAL MODE (manual fan control possible) <<<"
-        return 1
-    fi
-}
-
-detect_passthrough_mode 0
-EOF
-
-sudo chmod +x test_passthrough.sh
-sudo ./test_passthrough.sh
-
-#========================================================================================================
-#========================================================================================================
-
 # --- write Xorg config generator --- runs on every boot with xorg service, creates conf file needed for fan control
 
 sudo tee /usr/local/bin/generate-xorg-config.sh > /dev/null << 'GEN_EOF'
@@ -213,7 +136,7 @@ sudo /usr/local/bin/generate-xorg-config.sh
 
 # check xorg.conf has proper 'BUS ID'
 
-sudo cat /etc/X11/xorg.conf
+# sudo cat /etc/X11/xorg.conf
 
 #========================================================================================================
 #========================================================================================================
@@ -524,7 +447,7 @@ sudo chmod +x /usr/local/bin/fan-curve.sh
 #========================================================================================================
 #========================================================================================================
 
-# --- write Xorg-independent fan-curve.service --- should continue even if xorg crashes
+# --- write Xorg-independent fan-curve.service with Set power limit --- should continue even if xorg crashes
 
 sudo tee /etc/systemd/system/fan-curve.service > /dev/null << 'EOF'
 [Unit]
@@ -538,7 +461,8 @@ StartLimitBurst=0
 [Service]
 Type=simple
 
-ExecStartPre=/bin/sleep 3
+# Set power limit with error checking
+ExecStartPre=/bin/bash -c 'sleep 3; /usr/bin/nvidia-smi -pl 150 2>&1 | logger -t nvidia-power-limit'
 
 ExecStart=/usr/local/bin/fan-curve.sh
 ExecStop=/usr/local/bin/fan-reset.sh
@@ -550,6 +474,8 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
+
+sudo systemctl daemon-reload
 
 #========================================================================================================
 #========================================================================================================
@@ -581,7 +507,89 @@ sudo systemctl restart fan-curve.service
 
 # watch service log
 journalctl -u xorg-nvidia.service -f
+sudo systemctl restart fan-curve.service
 journalctl -u fan-curve.service -f
 
 journalctl -u xorg-nvidia.service -n 50 --no-pager
 journalctl -u fan-curve.service -n 50 --no-pager
+
+
+
+#========================================================================================================
+
+# --- manually test if gpu in 'passthrough' mode ---
+
+sudo tee test_passthrough.sh > /dev/null << 'EOF'
+#!/bin/bash
+
+DISPLAY=":0"
+
+detect_passthrough_mode() {
+    local GPU=$1
+
+    echo "=== Testing passthrough mode for GPU $GPU ==="
+
+    # 1) Test NV-CONTROL availability
+    local FANS
+    FANS=$(DISPLAY=$DISPLAY nvidia-settings -q fans 2>/dev/null | grep -o '\[fan:[0-9]\+\]')
+    if [[ -z "$FANS" ]]; then
+        echo "NV-CONTROL: NOT available (nvidia-settings cannot access fans)"
+        NVCONTROL_OK=0
+    else
+        echo "NV-CONTROL: Available (fans detected: $FANS)"
+        NVCONTROL_OK=1
+    fi
+
+    # 2) Test NVML (nvidia-smi) temperature read
+    local TEMP
+    TEMP=$(nvidia-smi --query-gpu=temperature.gpu \
+                      --format=csv,noheader,nounits -i "$GPU" 2>/dev/null | tr -d '[:space:]')
+    if [[ -z "$TEMP" || ! "$TEMP" =~ ^[0-9]+$ ]]; then
+        echo "NVML: NOT available (failed to read temperature)"
+        NVML_OK=0
+    else
+        echo "NVML: Available (temp=$TEMP°C)"
+        NVML_OK=1
+    fi
+
+    # 3) Test GPU utilization (indicates compute workload)
+    local UTIL
+    UTIL=$(nvidia-smi --query-gpu=utilization.gpu \
+                       --format=csv,noheader,nounits -i "$GPU" 2>/dev/null | tr -d '[:space:]')
+
+    if [[ "$UTIL" =~ ^[0-9]+$ ]]; then
+        echo "GPU Utilization: $UTIL%"
+        if (( UTIL > 40 )); then
+            HEAVY_LOAD=1
+        else
+            HEAVY_LOAD=0
+        fi
+    else
+        echo "GPU Utilization: Unknown"
+        HEAVY_LOAD=0
+    fi
+
+    echo ""
+    echo "EVALUATION:"
+    echo "  NV-CONTROL OK? $NVCONTROL_OK"
+    echo "  NVML OK?       $NVML_OK"
+    echo "  Heavy load?    $HEAVY_LOAD"
+    echo ""
+
+    if (( NVCONTROL_OK == 0 && NVML_OK == 1 && HEAVY_LOAD == 1 )); then
+        echo ">>> RESULT: PASSTHROUGH / COMPUTE MODE DETECTED <<<"
+        return 0
+    else
+        echo ">>> RESULT: NORMAL MODE (manual fan control possible) <<<"
+        return 1
+    fi
+}
+
+detect_passthrough_mode 0
+EOF
+
+sudo chmod +x test_passthrough.sh
+sudo ./test_passthrough.sh
+
+#========================================================================================================
+
