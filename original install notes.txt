@@ -462,7 +462,8 @@ StartLimitBurst=0
 Type=simple
 
 # Set power limit with error checking
-ExecStartPre=/bin/bash -c 'sleep 3; /usr/bin/nvidia-smi -pl 150 2>&1 | logger -t nvidia-power-limit'
+#ExecStartPre=/bin/bash -c 'sleep 3; /usr/bin/nvidia-smi -pl 150 2>&1 | logger -t nvidia-power-limit'
+ExecStartPre=/bin/bash -c 'sleep 3'
 
 ExecStart=/usr/local/bin/fan-curve.sh
 ExecStop=/usr/local/bin/fan-reset.sh
