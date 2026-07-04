@@ -1,4 +1,4 @@
-# NVML Fan Curve
+# NVML Fan Curve - py-nvtool
 
 A lightweight, headless NVIDIA fan curve controller that talks to the driver directly
 through NVML (`libnvidia-ml.so`) — no `nvidia-settings`, no X server, no Coolbits,
