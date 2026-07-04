@@ -23,7 +23,7 @@ the GPU is idle or fully loaded.
 | `nvtool.py` | Python NVML bindings + a small standalone CLI (query/set clocks, power limit, fan speed per GPU). Imported as a library by `fan_curve.py`. |
 | `fan_curve.py` | The fan curve daemon. Polls GPU temps on an interval and drives fan speed via NVML according to a configurable temp→fan% curve. |
 | `fan-curve.service` | systemd unit to run the daemon on boot, with clean shutdown (resets fans to AUTO on stop). |
-| `install_fan-curve.sh` | One-time full setup for a new rig: copies `nvtool.py` into place, writes `fan_curve.py` and `fan-curve.service`, enables and starts the service. |
+| `install_fan-curve.sh` | One-time full setup for a new rig: writes `fan_curve.py` and `fan-curve.service`, enables and starts the service. |
 | `fan_curve.sh` | Standalone script that just (re)writes `/usr/local/bin/fan_curve.py`. Re-run this alone when the daemon's Python logic changes, without touching the service config. |
 | `fan-curve_service.sh` | Standalone script that just (re)writes `fan-curve.service` and reloads/restarts it. Re-run this alone to tweak `--curve`, `--hysteresis`, `--cooldown-*`, etc. per rig. |
 
