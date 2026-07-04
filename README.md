@@ -84,7 +84,7 @@ sudo python3 fan_curve.py --curve "30:30,50:40,65:55,75:75,83:100"
 | `--index` | `-1` (all GPUs) | GPU index to control, or `-1` for all |
 | `--interval` | `2` | Seconds between temperature checks |
 | `--hysteresis` | `2` | Minimum fan% change required before re-issuing a fan-speed write, prevents fan "hunting" on small temp noise |
-| `--curve` | `30:30,45:35,55:45,65:55,75:75,83:100` | Temp(°C):Fan(%) points, comma-separated, linearly interpolated between points |
+| `--curve` | `30:30,40:55,50:65,55:90,65:100` | Temp(°C):Fan(%) points, comma-separated, linearly interpolated between points |
 | `--cooldown-delta` | `10` | Temp drop (°C) below the recent peak that triggers a hold before lowering the fan. `0` disables holding. |
 | `--cooldown-seconds` | `15` | How long a drop must persist before the fan is actually lowered |
 
