@@ -1,3 +1,5 @@
+-- claude.ai generated description... --
+
 # NVML Fan Curve - py-nvtool
 
 A lightweight, headless NVIDIA fan curve controller that talks to the driver directly
