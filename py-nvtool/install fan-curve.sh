@@ -1,13 +1,3 @@
-# --- nvtool.py: copy this over separately ---
-# copy to rig
-pscp "C:\Users\-windows-username-\Downloads\nvtool.py" user@10.10.0.109:/home/user/nvtool.py
-
-# copy on rig into place...
-sudo cp /home/user/nvtool.py /usr/local/bin/nvtool.py
-
-#========================================================================================================
-#========================================================================================================
-
 # --- write fan_curve.py --- NVML-based fan curve daemon (no Xorg/Coolbits needed)
 
 sudo tee /usr/local/bin/fan_curve.py > /dev/null << 'EOF'

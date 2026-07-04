@@ -38,15 +38,6 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl restart fan-curve.service
 
-
-
-
-# enable so it starts on boot
-sudo systemctl enable fan-curve.service
-
-# start it now
-sudo systemctl start fan-curve.service
-
 # show status
 sleep 2
 sudo systemctl status fan-curve.service
