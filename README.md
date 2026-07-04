@@ -43,6 +43,9 @@ the GPU is idle or fully loaded.
 **New rig — full setup:**
 
 ```bash
+# create nvtool.py and copy in text
+sudo nano /usr/local/bin/nvtool.py
+or
 # copy nvtool.py to rig
 pscp "C:\Users\-windows-username-\Downloads\nvtool.py" user@rig-ip:/home/user/nvtool.py
 
