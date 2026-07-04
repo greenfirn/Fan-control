@@ -74,7 +74,7 @@ where the per-rig settings live.
 ```bash
 sudo python3 fan_curve.py                                  # all GPUs, default curve
 sudo python3 fan_curve.py --index 0                         # GPU 0 only
-sudo python3 fan_curve.py --curve "30:30,50:40,65:55,75:75,83:100"
+sudo python3 fan_curve.py --curve "30:30,40:55,50:65,55:90,65:100"
 ```
 
 ### CLI flags
