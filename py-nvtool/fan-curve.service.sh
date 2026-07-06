@@ -40,11 +40,11 @@ sudo systemctl restart fan-curve.service
 
 # show status
 sleep 2
-sudo systemctl status fan-curve.service
+# sudo systemctl status fan-curve.service
 
 # watch the live log
 journalctl -u fan-curve.service -f
 
 # stop / restart as needed
-sudo systemctl stop fan-curve.service
-sudo systemctl restart fan-curve.service
+# sudo systemctl stop fan-curve.service
+# sudo systemctl restart fan-curve.service
