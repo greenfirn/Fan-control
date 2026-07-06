@@ -83,7 +83,7 @@ below its recent peak, the fan holds at its current (higher) speed for
 `--cooldown-seconds` before actually dropping — and cancels immediately if temp climbs
 back up in the meantime. Fan *increases* are always applied instantly, no delay.
 
-### Editing the curve per rig
+### Editing the fan curve
 
 The curve is set in `fan-curve_service.sh`'s `ExecStart` line. Edit the `--curve`
 value in that script, then re-run it:
