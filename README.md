@@ -56,9 +56,8 @@ sudo cp -v /home/user/nvtool.py /usr/local/bin/nvtool.py
 
 ```
 
-`fan-curve_service.sh` rewrites the systemd unit and reloads/restarts it in one go —
-edit the `--curve` (and other flags) in that script before running it, since that's
-where the per-rig settings live.
+`fan-curve_service.sh` rewrites the systemd unit and reloads/restarts it —
+edit the `--curve` (and other flags) in that script before running it.
 
 ## Usage - manual testing
 
