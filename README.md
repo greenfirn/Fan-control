@@ -69,7 +69,7 @@ sudo bash fan-curve_service.sh
 edit the `--curve` (and other flags) in that script before running it, since that's
 where the per-rig settings live.
 
-## Usage
+## Usage - manual testing
 
 ```bash
 sudo python3 fan_curve.py                                  # all GPUs, default curve
