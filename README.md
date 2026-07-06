@@ -1,4 +1,4 @@
--- service status, log --
+-- service status, log -- developed with help from and description by claude.ai
 
 ![log-Screenshot](py-nvtool/Screenshot-status-log.png)
 
