@@ -269,5 +269,5 @@ sudo systemctl status fan-curve.service
 journalctl -u fan-curve.service -f
 
 # stop / restart as needed
-sudo systemctl stop fan-curve.service
-sudo systemctl restart fan-curve.service
+# sudo systemctl stop fan-curve.service
+# sudo systemctl restart fan-curve.service
