@@ -1,6 +1,6 @@
 -- description generated using claude.ai --
 
--- credit to https://github.com/Akisoft41/py-nvtool for py style fan control --
+-- credit to https://github.com/Akisoft41/py-nvtool for py-nvtool fan control --
 
 # NVML Fan Curve - py-nvtool
 
