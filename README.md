@@ -20,7 +20,7 @@ This project instead calls `nvmlDeviceSetFanSpeed_v2` directly via `ctypes`, the
 interface `nvidia-smi` itself uses. No X server required, and it works identically whether
 the GPU is idle or fully loaded.
 
-## Files
+## Files - py-nvtool/
 
 | File | Purpose |
 |---|---|
