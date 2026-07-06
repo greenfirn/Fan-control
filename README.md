@@ -1,3 +1,5 @@
+-- service status, log --
+
 ![log-Screenshot](py-nvtool/Screenshot-status-log.png)
 
 -- credit to https://github.com/Akisoft41/py-nvtool for py-nvtool fan control --
