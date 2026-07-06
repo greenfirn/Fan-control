@@ -38,7 +38,7 @@ ExecStartPre=/bin/bash -c 'sleep 3'
 ExecStart=/usr/bin/python3 /usr/local/bin/fan_curve.py \
     --interval 2 --hysteresis 2 \
     --cooldown-delta 10 --cooldown-seconds 15 \
-    --curve "30:30,40:55,50:65,55:90,65:100"
+    --curve "30:30,40:45,50:65,55:90,65:100"
 
 # fan_curve.py resets fans to AUTO on SIGTERM before exiting, so no
 # separate ExecStop/fan-reset.sh script is needed. With WatchdogSignal=SIGTERM
