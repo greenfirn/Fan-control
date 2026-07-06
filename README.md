@@ -40,7 +40,7 @@ the GPU is idle or fully loaded.
 
 ## Install
 
-**New rig — full setup:**
+**New rig — setup:**
 
 ```bash
 # create nvtool.py and copy in text
