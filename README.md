@@ -1,4 +1,4 @@
--- code and description with help from claude.ai --
+-- description generated using claude.ai --
 
 -- credit to https://github.com/Akisoft41/py-nvtool for py style fan control --
 
