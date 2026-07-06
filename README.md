@@ -54,12 +54,6 @@ pscp "C:\Users\-windows-username-\Downloads\nvtool.py" user@rig-ip:/home/user/nv
 # copy on rig into place...
 sudo cp -v /home/user/nvtool.py /usr/local/bin/nvtool.py
 
-**Updating an existing rig:**
-
-```bash
-# changing this rig's curve/interval/hysteresis/cooldown settings?
-sudo bash fan-curve_service.sh
-
 ```
 
 `fan-curve_service.sh` rewrites the systemd unit and reloads/restarts it in one go —
