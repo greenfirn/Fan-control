@@ -57,12 +57,9 @@ sudo cp -v /home/user/nvtool.py /usr/local/bin/nvtool.py
 **Updating an existing rig:**
 
 ```bash
-# Changed the Python daemon logic (curve math, new flags, etc.)?
-sudo bash fan_curve.sh
-sudo systemctl restart fan-curve.service
-
-# Just changing this rig's curve/interval/hysteresis/cooldown settings?
+# changing this rig's curve/interval/hysteresis/cooldown settings?
 sudo bash fan-curve_service.sh
+
 ```
 
 `fan-curve_service.sh` rewrites the systemd unit and reloads/restarts it in one go —
