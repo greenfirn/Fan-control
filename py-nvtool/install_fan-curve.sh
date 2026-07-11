@@ -18,10 +18,22 @@ Usage:
 
 On exit (Ctrl+C or SIGTERM/systemd stop), all controlled fans are reset
 to automatic (driver/firmware) control before the process exits.
+
+Watchdog:
+    If run under systemd with Type=notify and WatchdogSec= set, this
+    script pings systemd once per successful tick (i.e. once every full
+    pass over all controlled GPUs). If an NVML call hangs (rather than
+    raising an error — the known failure mode with GSP firmware issues
+    like Xid 109/119/154) the ping stops, systemd's watchdog fires, and
+    the unit is killed + restarted by Restart=always. Without a running
+    NOTIFY_SOCKET (e.g. run by hand from a shell) this is a harmless
+    no-op.
 """
 
 import argparse
+import os
 import signal
+import socket
 import sys
 import time
 
@@ -44,6 +56,26 @@ _shutdown_requested = False
 def _handle_signal(signum, frame):
     global _shutdown_requested
     _shutdown_requested = True
+
+
+def sd_notify(message):
+    """Send a message to systemd via NOTIFY_SOCKET. No-op if not under systemd
+    (or if NOTIFY_SOCKET isn't set), so this is always safe to call."""
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return
+    if addr[0] == "@":
+        addr = "\0" + addr[1:]
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM | socket.SOCK_CLOEXEC)
+        try:
+            sock.connect(addr)
+            sock.sendall(message.encode())
+        finally:
+            sock.close()
+    except OSError:
+        # Don't let a notify-socket hiccup take down fan control.
+        pass
 
 
 def parse_curve(spec):
@@ -142,6 +174,9 @@ def main():
         print(f"[FAN] Curve: {curve}")
         print(f"[FAN] Interval={args.interval}s Hysteresis={args.hysteresis}%")
 
+        # Tell systemd we're up. No-op if not running under systemd.
+        sd_notify("READY=1\nSTATUS=Controlling {} GPU(s)".format(len(handles)))
+
         while not _shutdown_requested:
             for idx, handle in handles.items():
                 try:
@@ -192,6 +227,12 @@ def main():
                     except nv.NVMLError as error:
                         print(f"[FAN] GPU {idx}: WARN fan-set failed ({error})")
 
+            # Reached the end of a full pass over every GPU without hanging.
+            # If an NVML call above blocks forever instead of raising, this
+            # line is never reached, the watchdog ping stops, and systemd
+            # kills + restarts the unit after WatchdogSec.
+            sd_notify("WATCHDOG=1")
+
             # Sleep in small chunks so SIGTERM/SIGINT is handled promptly
             slept = 0.0
             while slept < args.interval and not _shutdown_requested:
@@ -199,6 +240,7 @@ def main():
                 slept += 0.5
 
         print("[FAN] Shutdown requested, resetting fans to AUTO...")
+        sd_notify("STOPPING=1")
 
     finally:
         reset_to_auto(handles)
@@ -226,9 +268,26 @@ Wants=nvidia-persistenced.service
 StartLimitIntervalSec=0
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 User=root
 Environment=PYTHONUNBUFFERED=1
+
+# If nvmlInit() or anything before the first READY=1 hangs at boot,
+# systemd kills the unit after this long and Restart=always retries.
+TimeoutStartSec=30
+
+# Loop pings systemd once per full pass over all GPUs (roughly once per
+# --interval). Set this comfortably above --interval + worst-case cooldown
+# stall so normal ticks never trip it, but a genuinely hung NVML call
+# (e.g. GSP firmware wedge) gets caught quickly.
+WatchdogSec=15
+
+# On watchdog timeout, send SIGTERM (not the systemd default SIGABRT) so
+# fan_curve.py's existing signal handler runs and resets fans to AUTO
+# before the process is killed, instead of an abrupt abort leaving fans
+# pinned at their last commanded speed.
+WatchdogSignal=SIGTERM
 
 # Give persistence/driver a moment to settle at boot
 ExecStartPre=/bin/bash -c 'sleep 3'
@@ -238,10 +297,11 @@ ExecStartPre=/bin/bash -c 'sleep 3'
 ExecStart=/usr/bin/python3 /usr/local/bin/fan_curve.py \
     --interval 2 --hysteresis 2 \
     --cooldown-delta 10 --cooldown-seconds 15 \
-    --curve "30:30,40:55,50:65,55:90,65:100"
+    --curve "30:30,40:45,50:65,55:90,65:100"
 
 # fan_curve.py resets fans to AUTO on SIGTERM before exiting, so no
-# separate ExecStop/fan-reset.sh script is needed.
+# separate ExecStop/fan-reset.sh script is needed. With WatchdogSignal=SIGTERM
+# above, this same clean-exit path also runs on a watchdog timeout.
 Restart=always
 RestartSec=5
 
@@ -269,5 +329,5 @@ sudo systemctl status fan-curve.service
 journalctl -u fan-curve.service -f
 
 # stop / restart as needed
-sudo systemctl stop fan-curve.service
-sudo systemctl restart fan-curve.service
+# sudo systemctl stop fan-curve.service
+# sudo systemctl restart fan-curve.service

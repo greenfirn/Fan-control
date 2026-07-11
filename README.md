@@ -1,8 +1,10 @@
--- code and description with help from claude.ai --
+-- service status, log -- developed with help from and description by claude.ai
 
--- credit to https://github.com/Akisoft41/py-nvtool for py style fan control --
+![log-Screenshot](py-nvtool/Screenshot-status-log.png)
 
-# NVML Fan Curve - py-nvtool
+-- credit to https://github.com/Akisoft41/py-nvtool for py-nvtool fan control --
+
+# NVML Fan Curve
 
 A lightweight, headless NVIDIA fan curve controller that talks to the driver directly
 through NVML (`libnvidia-ml.so`) — no `nvidia-settings`, no X server, no Coolbits,
@@ -20,7 +22,7 @@ This project instead calls `nvmlDeviceSetFanSpeed_v2` directly via `ctypes`, the
 interface `nvidia-smi` itself uses. No X server required, and it works identically whether
 the GPU is idle or fully loaded.
 
-## Files
+## Files - py-nvtool/
 
 | File | Purpose |
 |---|---|
@@ -40,36 +42,31 @@ the GPU is idle or fully loaded.
 
 ## Install
 
-**New rig — full setup:**
+**New rig — setup:**
 
 ```bash
+# create nvtool.py and copy in text
+sudo nano /usr/local/bin/nvtool.py
+
+or
+
 # copy nvtool.py to rig
 pscp "C:\Users\-windows-username-\Downloads\nvtool.py" user@rig-ip:/home/user/nvtool.py
 
 # copy on rig into place...
-sudo cp /home/user/nvtool.py /usr/local/bin/nvtool.py
+sudo cp -v /home/user/nvtool.py /usr/local/bin/nvtool.py
 
-**Updating an existing rig:**
-
-```bash
-# Changed the Python daemon logic (curve math, new flags, etc.)?
-sudo bash fan_curve.sh
-sudo systemctl restart fan-curve.service
-
-# Just changing this rig's curve/interval/hysteresis/cooldown settings?
-sudo bash fan-curve_service.sh
 ```
 
-`fan-curve_service.sh` rewrites the systemd unit and reloads/restarts it in one go —
-edit the `--curve` (and other flags) in that script before running it, since that's
-where the per-rig settings live.
+`fan-curve_service.sh` rewrites the systemd unit and reloads/restarts it —
+edit the `--curve` (and other flags) in that script before running it.
 
-## Usage
+## Usage - manual testing
 
 ```bash
 sudo python3 fan_curve.py                                  # all GPUs, default curve
 sudo python3 fan_curve.py --index 0                         # GPU 0 only
-sudo python3 fan_curve.py --curve "30:30,50:40,65:55,75:75,83:100"
+sudo python3 fan_curve.py --curve "30:30,40:55,50:65,55:90,65:100"
 ```
 
 ### CLI flags
@@ -79,7 +76,7 @@ sudo python3 fan_curve.py --curve "30:30,50:40,65:55,75:75,83:100"
 | `--index` | `-1` (all GPUs) | GPU index to control, or `-1` for all |
 | `--interval` | `2` | Seconds between temperature checks |
 | `--hysteresis` | `2` | Minimum fan% change required before re-issuing a fan-speed write, prevents fan "hunting" on small temp noise |
-| `--curve` | `30:30,45:35,55:45,65:55,75:75,83:100` | Temp(°C):Fan(%) points, comma-separated, linearly interpolated between points |
+| `--curve` | `30:30,40:55,50:65,55:90,65:100` | Temp(°C):Fan(%) points, comma-separated, linearly interpolated between points |
 | `--cooldown-delta` | `10` | Temp drop (°C) below the recent peak that triggers a hold before lowering the fan. `0` disables holding. |
 | `--cooldown-seconds` | `15` | How long a drop must persist before the fan is actually lowered |
 
@@ -88,7 +85,7 @@ below its recent peak, the fan holds at its current (higher) speed for
 `--cooldown-seconds` before actually dropping — and cancels immediately if temp climbs
 back up in the meantime. Fan *increases* are always applied instantly, no delay.
 
-### Editing the curve per rig
+### Editing the fan curve
 
 The curve is set in `fan-curve_service.sh`'s `ExecStart` line. Edit the `--curve`
 value in that script, then re-run it:
